@@ -1,0 +1,79 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip the project
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do unzip -o -q "$z" -d _unzipped; done
+          if [ -d _unzipped ]; then
+            src=_unzipped
+            [ -d _unzipped/khammen-app ] && src=_unzipped/khammen-app
+            cp -rn "$src"/. .
+          fi
+          ls
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare game files
+        run: node scripts/prepare-web.mjs
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: App icon & splash
+        run: npx capacitor-assets generate --android
+
+      - name: Portrait + full screen
+        run: node scripts/patch-android.mjs
+
+      - name: Sync
+        run: npx cap sync android
+
+      - name: Same signing key every build
+        run: |
+          mkdir -p ~/.android
+          cp signing/debug.keystore ~/.android/debug.keystore
+
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../khammen.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: khammen-apk
+          path: khammen.apk
+
+      - name: Publish on the Releases page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: khammen latest
+          body: "Download khammen.apk below and install it on your phone."
+          files: khammen.apk
+          make_latest: true
